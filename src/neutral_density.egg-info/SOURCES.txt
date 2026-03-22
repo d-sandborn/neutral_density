@@ -1,9 +1,0 @@
-README.md
-pyproject.toml
-src/neutral_density/__init__.py
-src/neutral_density/core.py
-src/neutral_density.egg-info/PKG-INFO
-src/neutral_density.egg-info/SOURCES.txt
-src/neutral_density.egg-info/dependency_links.txt
-src/neutral_density.egg-info/requires.txt
-src/neutral_density.egg-info/top_level.txt
