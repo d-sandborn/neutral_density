@@ -2,6 +2,14 @@ import numpy as np
 import math
 from numba import njit
 from scipy.io import FortranFile
+import os
+
+along_d = np.zeros(90, dtype=np.float32)
+alat_d = np.zeros(45, dtype=np.float32)
+p0_s_global = np.zeros(33, dtype=np.float32)
+n_global = np.zeros((90, 45), dtype=np.int32)
+iocean_global = np.zeros((90, 45), dtype=np.int32)
+stga_data = np.zeros((4050, 4, 33), dtype=np.float32)
 
 
 @njit
@@ -885,31 +893,6 @@ def gamma_errors(
     return pth_error, scv_l_error, scv_h_error
 
 
-along_d = np.zeros(90, dtype=np.float32)
-alat_d = np.zeros(45, dtype=np.float32)
-p0_s_global = np.zeros(33, dtype=np.float32)
-n_global = np.zeros((90, 45), dtype=np.int32)
-iocean_global = np.zeros((90, 45), dtype=np.int32)
-stga_data = np.zeros((4050, 4, 33), dtype=np.float32)
-
-
-def init_fdt(llp_path="llp.fdt", stga_path="stga.fdt"):
-    f = FortranFile(llp_path, "r")
-    record = f.read_reals(dtype=np.float32)
-    f.close()
-
-    along_d[:] = record[0:90]
-    alat_d[:] = record[90:135]
-    p0_s_global[:] = record[135:168]
-    n_global[:] = record[168:4218].view(np.int32).reshape((90, 45), order="F")
-    iocean_global[:] = (
-        record[4218:8268].view(np.int32).reshape((90, 45), order="F")
-    )
-
-    raw_stga = np.fromfile(stga_path, dtype=np.float32)
-    stga_data[:] = raw_stga.reshape((-1, 4, 33))
-
-
 @njit
 def read_nc(along, alat, s0, t0, p0, gamma0, a0, n0, along0, alat0, iocean0):
     nx, nz, ndx, ndy = 90, 33, 4, 4
@@ -1307,3 +1290,27 @@ def neutral_surfaces(
                     dsns[ig] = 0.0
                     dtns[ig] = 0.0
                     dpns[ig] = 0.0
+
+
+def init_fdt():
+    package_dir = os.path.dirname(os.path.abspath(__file__))
+    llp_path = os.path.join(package_dir, "llp.fdt")
+    stga_path = os.path.join(package_dir, "stga.fdt")
+
+    f = FortranFile(llp_path, "r")
+    record = f.read_reals(dtype=np.float32)
+    f.close()
+
+    along_d[:] = record[0:90]
+    alat_d[:] = record[90:135]
+    p0_s_global[:] = record[135:168]
+    n_global[:] = record[168:4218].view(np.int32).reshape((90, 45), order="F")
+    iocean_global[:] = (
+        record[4218:8268].view(np.int32).reshape((90, 45), order="F")
+    )
+
+    raw_stga = np.fromfile(stga_path, dtype=np.float32)
+    stga_data[:] = raw_stga.reshape((-1, 4, 33))
+
+
+init_fdt()
