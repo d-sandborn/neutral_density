@@ -15,18 +15,44 @@ Clone to your machine.  Ensure pip and python are installed in a virtual environ
 python -m pip install -e .
 ```
 
-This work is not yet available via conda-forge or pypy, but this is a target for future development if interest warrants.
+This work is not yet available via conda-forge or pypy, but that is a target for future development if interest warrants it.
 
 ## Use
 
-The first thing to do before using `neutral_density` is import the required Fortran data tables:
-
 ```python
 import neutral_density as nd 
-init_fdt(llp_path="path/to/llp.fdt", stga_path="path/to/stga.fdt")
+
+gamma, _, _ = nd.gamma_n(s = 35, t = 25, p = 10, along = 0, alat = 0)
+
+gamma
+>>> array([23.3304653])
 ```
 
-Within the package, they may be found at `neutral_density/src/neutral_density/`. 
+Arguments to `gamma_n` must be for a single location or cast. They may be given as a single scalar value (float or int), or an array given as a list or Numpy array containing a series of values. `gamma_n` returns a tuple of three objects: an array of neutral densities, an array of lower gamma estimates, and an array of higher gamma estimates. Call `gamma_n?` for more information in its docstring. 
+
+!!! inputs "`gamma_n` Arguments"
+
+    Necessary input arguments include `s`, `t`, `p`, `along`, and `alat`. 
+
+    #### Hydrographic Parameters
+
+    These may be 0- or 1-dimensional objects, with each entry indicating a bottle on a cast. Ensure that s/t/p are the same length.
+
+    * `s`: array of cast salinities, in psu (IPSS-78).
+
+    * `t`: array of cast in situ temperatures, in degrees C (IPTS-68 or -90 is unclear yet?).
+
+    * `p`: array of cast pressures, in db.
+
+    #### Coordinates
+
+    These must be single scalar values. If neutral densities for multiple casts are needed, consider looping `gamma_n()`. 
+
+    * `along`: longitude of cast (0-360).
+
+    * `alat` : latitude of cast (-80,64).    
+
+
 
 ## Citation
 

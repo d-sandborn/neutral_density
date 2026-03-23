@@ -3,6 +3,7 @@ import math
 from numba import njit
 from scipy.io import FortranFile
 import os
+import warnings
 
 along_d = np.zeros(90, dtype=np.float32)
 alat_d = np.zeros(45, dtype=np.float32)
@@ -12,8 +13,11 @@ iocean_global = np.zeros((90, 45), dtype=np.int32)
 stga_data = np.zeros((4050, 4, 33), dtype=np.float32)
 
 
-@njit
+@njit(cache=True)
 def atg(s, t, p):
+    """
+    Adiabatic temperature gradient deg c per decibar.
+    """
     ds = s - 35.0
     atg = (
         (
@@ -32,14 +36,17 @@ def atg(s, t, p):
     return atg
 
 
-@njit
+@njit(cache=True)
 def depth_ns(s, t, p, n, s0, t0, p0):
+    """
+    Find the position which the neutral surface through a specified bottle
+    intersects a neighboring cast.
+    """
     nmax = 100
     e = np.zeros(nmax)
     n2 = 2
     if n > nmax:
-        print("\nparameter nmax in depth-ns.f <", n, "\n")
-        raise ValueError("n > nmax")
+        print("n > nmax")
 
     ncr = 0
     sns, tns, pns = -99.0, -99.0, -99.0
@@ -92,8 +99,7 @@ def depth_ns(s, t, p, n, s0, t0, p0):
                             s, t, p, e, n, k, s0, t0, p0
                         )
                         if pns < p[k - 1] or pns > p[k]:
-                            print("ERROR 1 in depth-ns.f")
-                            raise ValueError("ERROR 1 in depth-ns.f")
+                            print("Check depths.")
                         else:
                             isuccess = 1
                     else:
@@ -129,8 +135,12 @@ def depth_ns(s, t, p, n, s0, t0, p0):
     return sns, tns, pns
 
 
-@njit
+@njit(cache=True)
 def derthe(s, t, p0):
+    """
+    Use the Bryden '73 polynomial for potential temperature as a function of
+    S,T,P to obtain partial derivatives of theta w.r.t. T,S,P.
+    """
     a0, a1, a2 = -0.36504e-4, -0.83198e-5, +0.54065e-7
     a3, b0, b1 = -0.40274e-9, -0.17439e-5, +0.29778e-7
     d0, c0, c1 = +0.41057e-10, -0.89309e-8, +0.31628e-9
@@ -153,8 +163,11 @@ def derthe(s, t, p0):
     return dthedt, dtheds, dthedp
 
 
-@njit
+@njit(cache=True)
 def eos8d(s, t, p0):
+    """
+    Specific volume anomaly based on EOS80.
+    """
     drv = np.zeros((3, 8))
     r3500, r4 = 1028.1063, 4.8314e-4
     dr350 = 28.106331
@@ -290,8 +303,9 @@ def eos8d(s, t, p0):
     return eos8d, drv
 
 
-@njit
+@njit(cache=True)
 def eosall(s, t, p0):
+    "Run all EOS80 functions."
     pr = 0.0
     thet = theta(s, t, p0, pr)
     edum, drv = eos8d(s, t, p0)
@@ -307,8 +321,12 @@ def eosall(s, t, p0):
     return thet, sigthe, alfnew, betnew, gamnew, soundv
 
 
-@njit
+@njit(cache=True)
 def theta(s, t0, p0, pr):
+    """
+    compute local potential temperature at pr using bryden 1973 polynomial f
+    or adiabatic lapse rate and runge-kutta 4th order integration algorithm.
+    """
     p = p0
     t = t0
     h = pr - p
@@ -328,8 +346,9 @@ def theta(s, t0, p0, pr):
     return theta
 
 
-@njit
+@njit(cache=True)
 def svan(s, t, p0):
+    "specific volume anomaly (steric anomaly) based on EOS80."
     r3500, r4 = 1028.1063, 4.8314e-4
     dr350 = 28.106331
     p = p0 / 10.0
@@ -376,8 +395,11 @@ def svan(s, t, p0):
     return svan_val, sigma
 
 
-@njit
+@njit(cache=True)
 def e_solve(s, t, p, e, n, k, s0, t0, p0):
+    """
+    Find the zero of the e function using a bisection method.
+    """
     n2 = 2
     pl = p[k - 1]
     el = e[k - 1]
@@ -421,16 +443,24 @@ def e_solve(s, t, p, e, n, k, s0, t0, p0):
     return sns, tns, pns, iter
 
 
-@njit
+@njit(cache=True)
 def sig_vals(s1, t1, p1, s2, t2, p2):
+    """
+    Computes the sigma values of two neighboring bottles w.r.t. the mid
+    pressure.
+    """
     pmid = (p1 + p2) / 2.0
     sd1, sig1 = svan(s1, theta(s1, t1, p1, pmid), pmid)
     sd2, sig2 = svan(s2, theta(s2, t2, p2, pmid), pmid)
     return sig1, sig2
 
 
-@njit
+@njit(cache=True)
 def stp_interp(s, t, p, n, p0):
+    """
+    Interpolate salinity and in situ temperature on a cast by linearly
+    interpolating salinity and potential temperature.
+    """
     k = indx(p, n, p0)
     r = (p0 - p[k]) / (p[k + 1] - p[k])
     s0 = s[k] + r * (s[k + 1] - s[k])
@@ -440,8 +470,9 @@ def stp_interp(s, t, p, n, p0):
     return s0, t0
 
 
-@njit
+@njit(cache=True)
 def indx(x, n, z):
+    "Find the index of a real number in a monotonically increasing real array."
     if x[0] < z and z < x[n - 1]:
         kl = 0
         ku = n - 1
@@ -460,13 +491,16 @@ def indx(x, n, z):
         elif z == x[n - 1]:
             k = n - 2
         else:
-            print("ERROR 1 in indx.f : out of range")
-            raise ValueError("ERROR 1 in indx.f")
+            print("Index out of range.")
     return k
 
 
-@njit
+@njit(cache=True)
 def depth_scv(s, t, p, n, s0, t0, p0):
+    """
+    Find position which the scv surface thru a specified bottle intersects
+    neighboring cast.
+    """
     n_max = 2000
     nscv_max = 50
     e = np.zeros(n_max)
@@ -475,7 +509,7 @@ def depth_scv(s, t, p, n, s0, t0, p0):
     pscv = np.zeros(nscv_max)
     n2 = 2
     if n > n_max:
-        raise ValueError("n > n_max")
+        print("Array lengths mismatched.")
     ncr = 0
     nscv = 0
     for k in range(n):
@@ -528,7 +562,7 @@ def depth_scv(s, t, p, n, s0, t0, p0):
                             s, t, p, e, n, k, s0, t0, p0
                         )
                         if pscv_tmp < p[k - 1] or pscv_tmp > p[k]:
-                            raise ValueError("ERROR 1 in depth-scv.f")
+                            print("Array lengths mismatched.")
                         else:
                             isuccess = 1
                     else:
@@ -557,7 +591,7 @@ def depth_scv(s, t, p, n, s0, t0, p0):
             if ncr > nscv:
                 nscv += 1
                 if nscv > nscv_max:
-                    raise ValueError("ERROR 2 in depth-scv.f")
+                    print("Array lengths mismatched.")
                 sscv[nscv - 1] = sscv_tmp
                 tscv[nscv - 1] = tscv_tmp
                 pscv[nscv - 1] = pscv_tmp
@@ -568,8 +602,9 @@ def depth_scv(s, t, p, n, s0, t0, p0):
     return sscv, tscv, pscv, nscv
 
 
-@njit
+@njit(cache=True)
 def scv_solve(s, t, p, e, n, k, s0, t0, p0):
+    "Find the zero of the v function using a bisection method."
     n2 = 2
     pl = p[k - 1]
     el = e[k - 1]
@@ -616,16 +651,21 @@ def scv_solve(s, t, p, e, n, k, s0, t0, p0):
     return sscv, tscv, pscv, iter
 
 
-@njit
+@njit(cache=True)
 def gamma_qdr(pl, gl, a, pu, gu, p):
+    "Evaluate the quadratic gamma profile at a pressure between two bottles"
     p1 = (p - pu) / (pu - pl)
     p2 = (p - pl) / (pu - pl)
     gamma = (a * p1 + (gu - gl)) * p2 + gl
     return gamma
 
 
-@njit
+@njit(cache=True)
 def goor_solve(sl, tl, el, su, tu, eu, p, s0, t0, p0, sigb):
+    """
+    Find the intersection of a potential density surface between two bottles
+    using a bisection method.
+    """
     rl = 0.0
     ru = 1.0
     pmid = (p + p0) / 2.0
@@ -667,8 +707,12 @@ def goor_solve(sl, tl, el, su, tu, eu, p, s0, t0, p0, sigb):
     return sns, tns
 
 
-@njit
+@njit(cache=True)
 def goor(s, t, p, gamma, n, sb, tb, pb):
+    """
+    Extend a cast of hydrographic data so that a bottle outside the gamma range
+    of the cast can be labelled with the neutral density variable
+    """
     delt_b = -0.1
     delt_t = 0.1
     slope = -0.14
@@ -764,7 +808,7 @@ def goor(s, t, p, gamma, n, sb, tb, pb):
             gammab = gamma[0] - bmid * (sigu - sigl)
             pns = p[0]
         else:
-            raise ValueError("ERROR 1 in gamma-out-of-range.f")
+            print("Issue with goor.")
     thb = theta(sb, tb, pb, pr0)
     thns = theta(sns, tns, pns, pr0)
     sdum, sig_ns = svan(sns, tns, pns)
@@ -783,8 +827,9 @@ def goor(s, t, p, gamma, n, sb, tb, pb):
     return gammab, g1_err, g2_l_err, g2_h_err
 
 
-@njit
+@njit(cache=True)
 def ocean_test(x1, y1, io1, x2, y2, io2, z):
+    "Test whether two locations are connected by ocean."
     x_js = np.array([129.87, 140.37, 142.83])
     y_js = np.array([32.75, 37.38, 53.58])
     y = (y1 + y2) / 2
@@ -835,10 +880,14 @@ def ocean_test(x1, y1, io1, x2, y2, io2, z):
     return itest
 
 
-@njit
+@njit(cache=True)
 def gamma_errors(
     s, t, p, gamma, a, n, along, alat, s0, t0, p0, sns, tns, pns, kns, gamma_ns
 ):
+    """
+    Find the p-theta and the scv errors associated with the basic neutral
+    surface calculation.
+    """
     pr0 = 0.0
     tb = 2.7e-8
     gamma_limit = 26.845
@@ -889,12 +938,31 @@ def gamma_errors(
                 else:
                     scv_h_error = gamma_scv - gamma_ns
     if pth_error < 0.0 or scv_l_error < 0.0 or scv_h_error < 0.0:
-        raise ValueError("ERROR 1 in gamma-errors: negative scv error")
+        print("Negative scv error.")
     return pth_error, scv_l_error, scv_h_error
 
 
-@njit
-def read_nc(along, alat, s0, t0, p0, gamma0, a0, n0, along0, alat0, iocean0):
+@njit(cache=True)
+def read_nc(
+    along,
+    alat,
+    s0,
+    t0,
+    p0,
+    gamma0,
+    a0,
+    n0,
+    along0,
+    alat0,
+    iocean0,
+    along_d,
+    alat_d,
+    p0_s_global,
+    stga_data,
+    n_global,
+    iocean_global,
+):
+    "Read variables from the netcdf labelled data files."
     nx, nz, ndx, ndy = 90, 33, 4, 4
 
     i0 = int(along / ndx) + 1
@@ -960,8 +1028,98 @@ def read_nc(along, alat, s0, t0, p0, gamma0, a0, n0, along0, alat0, iocean0):
     iocean0[1, 1] = iocean_global[i0_1 - 1, j0_1 - 1]
 
 
-@njit
-def gamma_n(s, t, p, n, along, alat, gamma, dg_lo, dg_hi):
+def gamma_n(s, t, p, along, alat):
+    """
+    Label a cast of hydrographic data at a specified location with neutral
+    density.
+
+    [This is the wrapper function which standardizes input types.]
+
+    -99.0 denotes algorithm failed, -99.1 denotes input data is outside the
+    valid range of the present equation of state.
+
+
+    Parameters
+    ----------
+    s : array
+        array of cast salinities, in psu (IPSS-78).
+    t : array
+        array of cast in situ temperatures, in degrees C (IPTS-68).
+    p : array
+        array of cast pressures, in db.
+    along : float
+        longitude of cast (0-360).
+    alat : float
+        latitude of cast (-80,64).
+
+    Returns
+    -------
+    gamma : array
+        array of cast gamma values, in kg m-3.
+    dg_lo : array
+        array of gamma lower error estimates.
+    dg_hi : array
+        array of gamma upper error estimates.
+
+    """
+    s = np.atleast_1d(np.asarray(s, dtype=np.float64))
+    t = np.atleast_1d(np.asarray(t, dtype=np.float64))
+    p = np.atleast_1d(np.asarray(p, dtype=np.float64))
+    n = s.size
+
+    gamma = np.zeros(n, dtype=np.float64)
+    dg_lo = np.zeros(n, dtype=np.float64)
+    dg_hi = np.zeros(n, dtype=np.float64)
+
+    try:
+        along = float(np.asarray(along).item())
+        alat = float(np.asarray(alat).item())
+    except ValueError:
+        raise ValueError(
+            "longitude and latitude must be scalars or single-element sequences for this function."
+        )
+
+    gamma, dg_lo, dg_hi = _gamma_n_core(
+        s,
+        t,
+        p,
+        along,
+        alat,
+        n,
+        gamma,
+        dg_lo,
+        dg_hi,
+        along_d,
+        alat_d,
+        p0_s_global,
+        stga_data,
+        n_global,
+        iocean_global,
+    )
+
+    return gamma, dg_lo, dg_hi
+
+
+@njit(cache=True)
+def _gamma_n_core(
+    s,
+    t,
+    p,
+    along,
+    alat,
+    n,
+    gamma,
+    dg_lo,
+    dg_hi,
+    along_d,
+    alat_d,
+    p0_s_global,
+    stga_data,
+    n_global,
+    iocean_global,
+):
+    "This is the hidden function called by the wrapper gamma_n()."
+
     nz, ndx, ndy = 33, 4, 4
     iocean0 = np.zeros((2, 2), dtype=np.int32)
     n0 = np.zeros((2, 2), dtype=np.int32)
@@ -988,7 +1146,7 @@ def gamma_n(s, t, p, n, along, alat, gamma, dg_lo, dg_hi):
         ialtered = 0
 
     if along < 0.0 or along > 360.0 or alat < -90.0 or alat > 90.0:
-        raise ValueError("ERROR 1 in gamma-n.f : out of oceanographic range")
+        print("Coordinates out of range.")
 
     for k in range(n):
         if (
@@ -1007,7 +1165,25 @@ def gamma_n(s, t, p, n, along, alat, gamma, dg_lo, dg_hi):
             dg_lo[k] = 0.0
             dg_hi[k] = 0.0
 
-    read_nc(along, alat, s0, t0, p0, gamma0, a0, n0, along0, alat0, iocean0)
+    read_nc(
+        along,
+        alat,
+        s0,
+        t0,
+        p0,
+        gamma0,
+        a0,
+        n0,
+        along0,
+        alat0,
+        iocean0,
+        along_d,
+        alat_d,
+        p0_s_global,
+        stga_data,
+        n_global,
+        iocean_global,
+    )
 
     dist2_min = 1e10
     i_min, j_min = 0, 0
@@ -1164,11 +1340,74 @@ def gamma_n(s, t, p, n, along, alat, gamma, dg_lo, dg_hi):
         along -= 360.0
     elif ialtered == 2:
         along = 360.0
+    return gamma, dg_lo, dg_hi
 
 
-@njit
-def neutral_surfaces(
-    s, t, p, gamma, n, glevels, ng, sns, tns, pns, dsns, dtns, dpns
+def neutral_surfaces(s, t, p, gamma, glevels):
+    """
+    For a cast of hydrographic data which has been labelled with the neutral
+    density variable gamma, find the salinities, temperatures and pressures on
+    ng specified neutral density surfaces.
+
+    sns, tns and pns values of -99.0 denote under or outcropping
+
+    Non-zero dsns, dtns and dpns indicate multiply defined surfaces.
+
+    Parameters
+    ----------
+    s : array
+        array of cast salinities, in psu (IPSS-78)
+    t : array
+        array of cast in situ temperatures, in degrees C (IPTS-68).
+    p : array
+        array of cast pressures, in db.
+    gamma : array
+        array of cast gamma values, in kg m-3.
+    glevels : array
+        array of neutral density values, in kg m-3.
+
+    Returns
+    -------
+    sns : array
+        salinity on the neutral density surfaces.
+    tns : array
+        in situ temperature on the surfaces.
+    pns : array
+        pressure on the surfaces.
+    dsns : array
+        surface salinity errors.
+    dtns : array
+        surface temperature errors.
+    dpns : array
+        surface pressure errors.
+
+    """
+    s = np.atleast_1d(np.asarray(s, dtype=np.float64))
+    t = np.atleast_1d(np.asarray(t, dtype=np.float64))
+    p = np.atleast_1d(np.asarray(p, dtype=np.float64))
+    gamma = np.atleast_1d(np.asarray(gamma, dtype=np.float64))
+    glevels = np.atleast_1d(np.asarray(glevels, dtype=np.float64))
+
+    n = s.size
+    ng = glevels.size
+
+    sns = np.zeros(ng, dtype=np.float64)
+    tns = np.zeros(ng, dtype=np.float64)
+    pns = np.zeros(ng, dtype=np.float64)
+    dsns = np.zeros(ng, dtype=np.float64)
+    dtns = np.zeros(ng, dtype=np.float64)
+    dpns = np.zeros(ng, dtype=np.float64)
+
+    _neutral_surfaces_core(
+        s, t, p, n, gamma, ng, glevels, sns, tns, pns, dsns, dtns, dpns
+    )
+
+    return sns, tns, pns, dsns, dtns, dpns
+
+
+@njit(cache=True)
+def _neutral_surfaces_core(
+    s, t, p, n, gamma, ng, glevels, sns, tns, pns, dsns, dtns, dpns
 ):
     nint_max = 50
     int_arr = np.zeros(nint_max, dtype=np.int32)
@@ -1182,7 +1421,7 @@ def neutral_surfaces(
             in_error = 1
 
     if in_error == 1:
-        raise ValueError("ERROR 1 in neutral-surfaces.f : missing gamma value")
+        print("Negative neutral density value.")
 
     for ig in range(ng):
         nint = 0
@@ -1193,7 +1432,7 @@ def neutral_surfaces(
                 int_arr[nint] = k
                 nint += 1
                 if nint > nint_max:
-                    raise ValueError("ERROR 2 in neutral-surfaces.f")
+                    raise ValueError("Check array lengths.")
 
         if nint == 0:
             sns[ig] = -99.0
@@ -1258,7 +1497,7 @@ def neutral_surfaces(
                     elif p[k] - ptol <= pns2 <= p[k + 1] + ptol:
                         pns[ig] = min(p[k + 1], max(pns2, p[k]))
                     else:
-                        raise ValueError("ERROR 3 in neutral-surfaces.f")
+                        print("Interpolation was unsuccessful.")
                 else:
                     rg = (glevels[ig] - gamma[k]) / (gamma[k + 1] - gamma[k])
                     pns[ig] = p[k] + rg * (p[k + 1] - p[k])
@@ -1290,6 +1529,7 @@ def neutral_surfaces(
                     dsns[ig] = 0.0
                     dtns[ig] = 0.0
                     dpns[ig] = 0.0
+    return sns, tns, pns, dsns, dtns, dpns
 
 
 def init_fdt():
